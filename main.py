@@ -1,4 +1,3 @@
-
 """
 main.py: třetí projekt do Engeto Online Python Akademie
 
@@ -12,7 +11,9 @@ from bs4 import BeautifulSoup
 import csv
 from urllib.parse import urlparse, parse_qs
 
+
 def validate_arguments():
+    """Skontroluje počet a formát zadaných argumentov."""
     if len(sys.argv) != 3:
         print("Chyba: Musíte zadať 2 argumenty – URL a názov CSV súboru.")
         print("Použitie: python main.py \"URL\" \"vystup.csv\"")
@@ -27,7 +28,9 @@ def validate_arguments():
 
     return url, output_file
 
+
 def get_obec_links(url):
+    """Získa všetky odkazy na obce zo vstupnej stránky."""
     response = requests.get(url)
     response.encoding = 'utf-8'
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -42,21 +45,21 @@ def get_obec_links(url):
         links += table.find_all('a')
 
     base_url = "https://www.volby.cz/pls/ps2017nss/"
-    obec_links = list(set(base_url + link['href'] for link in links))
+    full_links = list(set(base_url + link['href'] for link in links))
 
-    if not obec_links:
+    if not full_links:
         print("Chyba: Na stránke neboli nájdené žiadne odkazy na obce.")
         sys.exit(1)
 
-    print(f"Nájdených obcí: {len(obec_links)}")
-    print(f"Prvý odkaz: {obec_links[0]}")
+    return full_links
 
-    return obec_links
 
 def extract_parties(soup):
+    """Z extrahovaných tabuliek vytiahne zoznam strán a ich hlasov."""
     parties = {}
     for table in soup.find_all("table"):
-        for row in table.find_all("tr"):
+        rows = table.find_all("tr")
+        for row in rows:
             cols = row.find_all("td")
             if len(cols) >= 3:
                 try:
@@ -68,52 +71,59 @@ def extract_parties(soup):
                     continue
     return parties
 
+
 def extract_municipality_data(link, party_names):
-    try:
-        res = requests.get(link)
-        res.encoding = 'utf-8'
-        soup = BeautifulSoup(res.text, 'html.parser')
+    """Spracuje údaje pre jednu obec a vráti ich ako zoznam."""
+    res = requests.get(link)
+    res.encoding = 'utf-8'
+    soup = BeautifulSoup(res.text, 'html.parser')
 
-        code = parse_qs(urlparse(link).query).get('xobec', [''])[0]
+    code = parse_qs(urlparse(link).query).get('xobec', [''])[0]
 
-        location = ''
-        for tag in soup.find_all('h3'):
-            if "Obec:" in tag.text:
-                location = tag.text.replace('Obec:', '').strip()
-                break
+    h3_tags = soup.find_all('h3')
+    location = ''
+    for tag in h3_tags:
+        if "Obec:" in tag.text:
+            location = tag.text.replace('Obec:', '').strip()
+            break
 
-        registered = soup.find('td', {'headers': 'sa2'}).text.replace('\xa0', '').strip()
-        envelopes = soup.find('td', {'headers': 'sa5'}).text.replace('\xa0', '').strip()
-        valid = soup.find('td', {'headers': 'sa6'}).text.replace('\xa0', '').strip()
+    registered = soup.find('td', {'headers': 'sa2'}).text.replace('\xa0', '').strip()
+    envelopes = soup.find('td', {'headers': 'sa5'}).text.replace('\xa0', '').strip()
+    valid = soup.find('td', {'headers': 'sa6'}).text.replace('\xa0', '').strip()
 
-        parties = extract_parties(soup)
-        votes = [parties.get(name, '0') for name in party_names]
+    parties = extract_parties(soup)
+    votes = [parties.get(name, '0') for name in party_names]
 
-        print(f"{location} spracovaná")
-        return [code, location, registered, envelopes, valid] + votes
+    return [code, location, registered, envelopes, valid] + votes
 
-    except Exception as e:
-        print(f"Chyba v {link}: {e}")
-        return None
 
 def main():
     url, output_file = validate_arguments()
     obec_links = get_obec_links(url)
 
+    print(f"Nájdených obcí: {len(obec_links)}")
+    print(f"Prvý odkaz: {obec_links[0]}")
+
+    # Zistenie názvov strán z prvej obce
     first_obec_html = requests.get(obec_links[0])
     first_obec_html.encoding = 'utf-8'
     first_soup = BeautifulSoup(first_obec_html.text, 'html.parser')
     party_names = list(extract_parties(first_soup).keys())
 
+    # Zápis do CSV
     with open(output_file, mode='w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
         header = ['kód obce', 'obec', 'voliči', 'obálky', 'platné hlasy'] + party_names
         writer.writerow(header)
 
         for link in obec_links:
-            row = extract_municipality_data(link, party_names)
-            if row:
+            try:
+                row = extract_municipality_data(link, party_names)
                 writer.writerow(row)
+                print(f"{row[1]} spracovaná")
+            except Exception as e:
+                print(f"Chyba v {link}: {e}")
+
 
 if __name__ == "__main__":
     main()
